@@ -7,6 +7,8 @@
     2026-08-06 - Initial version covering San Francisco + Oakland MVP.
     2026-08-06 - Documented the drop-a-pin feature (tap the map to search a
                  spot with no address; drag the green pin to fine-tune).
+    2026-08-06 - Phase 2: added Chicago, and the FBI town-level fallback for
+                 everywhere else in the US (needs free FBI_API_KEY on Render).
                  (latest change)
 -->
 
@@ -24,14 +26,23 @@ Pick a radius and a time window, and see reported crimes as color-coded pins on 
 A summary panel shows counts by severity and the most common crime types inside
 your circle.
 
-## Coverage (v1)
+## Coverage
 
 | City | Source | Freshness |
 |---|---|---|
 | San Francisco, CA | DataSF / SFPD Incident Reports (free public API) | Updated ~daily |
 | Oakland, CA | City of Oakland CrimeWatch (free public API) | Rolling past 90 days only |
+| Chicago, IL | City of Chicago Data Portal (free public API) | Published with ~1 week delay |
 
-Addresses outside covered cities get a clear "not covered yet" message.
+**Everywhere else in the US:** when the free `FBI_API_KEY` environment
+variable is set on Render, uncovered locations get a *town-wide safety
+picture* instead of an apology — the town's name (free US Census reverse
+lookup), its latest-year violent and property crime totals from the FBI
+Crime Data Explorer, and per-1,000-resident rates compared to the US
+average. The app is honest that this is annual, town-wide data that runs
+about a year behind, with no street pins. Without the key, uncovered
+locations simply get the "not covered yet" message as before.
+
 The architecture is adapter-based: each city is one file in `sources/`, so new
 cities plug in without touching the rest of the app.
 
@@ -43,14 +54,22 @@ sources/index.js     <- city registry (add new cities here)
 sources/severity.js  <- maps raw crime categories to red/blue/yellow/gray
 sources/sanfrancisco.js  <- San Francisco data adapter
 sources/oakland.js       <- Oakland data adapter
+sources/chicago.js       <- Chicago data adapter
+sources/fbi.js           <- nationwide town-level fallback (FBI + Census)
 public/index.html    <- the entire app screen (map, controls, results panel)
 render.yaml          <- tells Render how to run the app
 package.json         <- app identity + dependencies (just Express)
 ```
 
-No API keys are required. Optional: a free Socrata "app token" raises the
-open-data rate limits — if you get one, add it on Render as an environment
-variable named `SOCRATA_APP_TOKEN`.
+No API keys are required for the three pin-level cities. Two optional free
+keys unlock more:
+
+- `FBI_API_KEY` — free from api.data.gov (instant, email only). Turns on the
+  nationwide town-level fallback described above.
+- `SOCRATA_APP_TOKEN` — free Socrata "app token" that raises the open-data
+  rate limits for the city feeds.
+
+Both go in Render → your service → Environment tab.
 
 ## Deploying (GitHub → Render)
 

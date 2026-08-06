@@ -11,15 +11,17 @@
  *          frontend discover cities through this registry.
  * Exports: ADAPTERS (array), findAdapterForPoint(lat, lng), listCities().
  * Change log:
- *   2026-08-06 - Initial version with San Francisco and Oakland. (latest change)
+ *   2026-08-06 - Initial version with San Francisco and Oakland.
+ *   2026-08-06 - Registered Chicago. (latest change)
  */
 
 "use strict";
 
 const sanFrancisco = require("./sanfrancisco");
 const oakland = require("./oakland");
+const chicago = require("./chicago");
 
-const ADAPTERS = [sanFrancisco, oakland];
+const ADAPTERS = [sanFrancisco, oakland, chicago];
 
 /**
  * Find the adapter whose coverage area contains the given point.

@@ -15,7 +15,11 @@
  *          classifier works across every city feed we add later.
  * Used by: sources/sanfrancisco.js, sources/oakland.js (and any future adapter).
  * Change log:
- *   2026-08-06 - Initial version. (latest change)
+ *   2026-08-06 - Initial version.
+ *   2026-08-06 - Added keywords for Chicago's category vocabulary (CRIMINAL
+ *                DAMAGE, DECEPTIVE PRACTICE, STALKING, INTIMIDATION, etc.)
+ *                so Chicago incidents classify correctly. These additions
+ *                also help any future city using similar terms. (latest change)
  */
 
 "use strict";
@@ -45,7 +49,8 @@ const RULES = [
       "CARJACK", "ASSAULT", "BATTERY", "SHOOT", "STABBING", "KIDNAP",
       "WEAPON", "FIREARM", "GUN", "ARSON", "HUMAN TRAFFICKING",
       "CHILD ABUSE", "DOMESTIC VIOLENCE", "STRONGARM", "BRANDISHING",
-      "THREATS", "EXTORTION", "OFFENCES AGAINST THE FAMILY"
+      "THREATS", "EXTORTION", "OFFENCES AGAINST THE FAMILY",
+      "STALKING", "INTIMIDATION", "INVOLVING CHILDREN", "CONCEALED CARRY"
     ]
   },
   {
@@ -58,7 +63,9 @@ const RULES = [
       "DUI", "RECKLESS DRIVING", "TRAFFIC VIOLATION", "MUNICIPAL CODE",
       "PETTY", "VEHICLE BREAK-IN", "AUTO BOOST", "CURFEW", "VAGRANCY",
       "SUSPENDED LICENSE", "PROBATION", "PAROLE", "COURT VIOLATION",
-      "RESISTING", "OBSTRUCT", "BRIBERY", "PERJURY", "IDENTITY"
+      "RESISTING", "OBSTRUCT", "BRIBERY", "PERJURY", "IDENTITY",
+      "CRIMINAL DAMAGE", "DECEPTIVE PRACTICE", "PUBLIC PEACE",
+      "INTERFERENCE WITH PUBLIC", "OBSCEN"
     ]
   }
 ];

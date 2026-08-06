@@ -16,7 +16,13 @@
  *      SOCRATA_APP_TOKEN raises open-data rate limits (set it in Render).
  * Input limits: radiusMiles clamped to 0.05-10, days clamped to 1-365.
  * Change log:
- *   2026-08-06 - Initial version. (latest change)
+ *   2026-08-06 - Initial version.
+ *   2026-08-06 - Uncovered locations now try the FBI town-level fallback
+ *                (sources/fbi.js): if the free FBI_API_KEY env var is set on
+ *                Render, "not covered" searches return a town-wide safety
+ *                picture (place name, latest-year violent/property counts
+ *                and per-1,000 rates vs US average) instead of only an
+ *                apology. Without the key, behavior is unchanged. (latest change)
  */
 
 "use strict";
@@ -25,6 +31,7 @@ const path = require("path");
 const express = require("express");
 const { findAdapterForPoint, listCities } = require("./sources");
 const { SEVERITY_INFO } = require("./sources/severity");
+const { townLevelFallback } = require("./sources/fbi");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -144,12 +151,17 @@ app.get("/api/crimes", async (req, res) => {
 
   const adapter = findAdapterForPoint(lat, lng);
   if (!adapter) {
+    // Not in a covered city: try the FBI town-level fallback (returns null
+    // when FBI_API_KEY isn't set or data isn't available for this spot).
+    const fallback = await townLevelFallback(lat, lng);
     return res.json({
       covered: false,
-      message:
-        "That location isn't in a covered city yet. Safe currently covers: " +
-        listCities().map((c) => c.name).join(", ") +
-        ". More cities are on the way.",
+      fallback: fallback, // null, or a town-wide safety picture
+      message: fallback
+        ? "Street-level pins aren't available here yet, but here's the town-wide picture."
+        : "That location isn't in a covered city yet. Safe currently covers: " +
+          listCities().map((c) => c.name).join(", ") +
+          ". More cities are on the way.",
       cities: listCities().map((c) => c.name)
     });
   }

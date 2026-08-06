@@ -31,6 +31,11 @@
                  (a landmark name the free geocoders cannot resolve, found
                  during live testing) to a normal street address that always
                  works.
+    2026-08-06 - Phase 2: (a) intro text now lists Chicago; (b) uncovered
+                 locations can render a "town-wide picture" panel when the
+                 server provides the FBI fallback (place name, latest-year
+                 violent/property counts and per-1,000 rates vs US average,
+                 honest caveats, no pins).
     2026-08-06 - Jim's field-test feedback, two changes:
                  (1) Pins were lost in the busy basemap. Added a "veil": the
                  map tiles are slightly desaturated via CSS filter AND a
@@ -213,8 +218,9 @@
     <div id="map"></div>
     <div id="results">
       <p id="status">Search an address, tap "Use my location", or just tap anywhere on the map to
-        drop a pin - no address needed. Currently covering <b>San Francisco</b> and
-        <b>Oakland</b> - more cities coming.</p>
+        drop a pin - no address needed. Street-level pins in <b>San Francisco</b>,
+        <b>Oakland</b>, and <b>Chicago</b>; everywhere else in the US gets a town-wide
+        safety picture.</p>
       <div class="legend">
         <span><span class="dot" style="background:var(--c-homicide)"></span>Homicide / Murder</span>
         <span><span class="dot" style="background:var(--c-violent)"></span>Violent crime / Felony</span>
@@ -451,7 +457,11 @@ function renderResult(data, label) {
   drawCenterAndCircle(lat, lng, radiusMiles);
 
   if (!data.covered) {
-    setStatus(data.message, true);
+    if (data.fallback) {
+      renderTownFallback(data.fallback, data.message);
+    } else {
+      setStatus(data.message, true);
+    }
     return;
   }
 
@@ -511,6 +521,41 @@ function renderResult(data, label) {
 
   html += '<div class="attribution">' + escapeHtml(data.attribution || "") +
           " &middot; Locations are approximate (police reports are mapped to blocks/intersections to protect privacy).</div>";
+  summaryEl.innerHTML = html;
+}
+
+// Town-wide picture for places without street-level pins (FBI annual data).
+function renderTownFallback(fb, message) {
+  setStatus(message, false);
+
+  function rateLine(label, stats, nationalRate) {
+    if (!stats) return "";
+    var line = "<li><span>" + escapeHtml(label) + " (" + escapeHtml(fb.year || "?") + ")</span><span>" +
+               Number(stats.count).toLocaleString() + "</span></li>";
+    if (stats.ratePer1000 !== null && stats.ratePer1000 !== undefined) {
+      var comparison = stats.ratePer1000 > nationalRate ? "above" :
+                       stats.ratePer1000 < nationalRate ? "below" : "at";
+      line += '<li><span style="padding-left:12px">Rate per 1,000 residents</span><span>' +
+              stats.ratePer1000 + " (" + comparison + " the US average of " + nationalRate + ")</span></li>";
+    }
+    return line;
+  }
+
+  var html = '<div class="summary-title">Town-wide picture: ' +
+             escapeHtml(fb.placeName) + ", " + escapeHtml(fb.stateAbbr) + "</div>";
+  if (fb.population) {
+    html += '<div style="font-size:13px;color:var(--c-muted);margin-bottom:6px">Population ~' +
+            Number(fb.population).toLocaleString() + "</div>";
+  }
+  html += '<ul class="cat-list">';
+  html += rateLine("Violent crimes reported", fb.violent, fb.nationalViolentPer1000);
+  html += rateLine("Property crimes reported", fb.property, fb.nationalPropertyPer1000);
+  html += "</ul>";
+  html += '<div class="note">These are annual, town-wide totals reported by ' +
+          escapeHtml(fb.agencyName) +
+          " - not block-by-block pins, and federal data runs about a year behind. " +
+          "Street-level detail for this area is on the roadmap.</div>";
+  html += '<div class="attribution">' + escapeHtml(fb.attribution || "") + "</div>";
   summaryEl.innerHTML = html;
 }
 </script>
