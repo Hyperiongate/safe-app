@@ -2,12 +2,17 @@
 # File: .gitignore
 # Purpose: Keeps installed packages and local junk out of the GitHub repo.
 #   node_modules is rebuilt automatically by Render during deploy.
+#   _to_delete/ is a holding pen for files Claude moves aside on Jim's
+#   computer (the remote connection can create/move files but not delete
+#   them) - Jim empties it whenever; Git must never track it.
 # Change log:
-#   2026-08-06 - Initial version. (latest change)
+#   2026-08-06 - Initial version.
+#   2026-08-06 - Ignore _to_delete/ holding folder. (latest change)
 
 node_modules/
 npm-debug.log*
 .DS_Store
 .env
+_to_delete/
 
 # I did no harm and this file is not truncated

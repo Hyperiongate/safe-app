@@ -27,6 +27,21 @@
                  center pin is draggable to fine-tune the spot. Crime pins
                  have bubblingMouseEvents:false so tapping a crime pin opens
                  its popup instead of accidentally starting a new search.
+    2026-08-06 - Changed the search-box example from "1 Ferry Building"
+                 (a landmark name the free geocoders cannot resolve, found
+                 during live testing) to a normal street address that always
+                 works.
+    2026-08-06 - Jim's field-test feedback, two changes:
+                 (1) Pins were lost in the busy basemap. Added a "veil": the
+                 map tiles are slightly desaturated via CSS filter AND a
+                 translucent white layer sits at z-index 350 (above tiles at
+                 200, below vector pins at 400), so streets stay readable but
+                 incident colors pop. Pins are also one size bigger with a
+                 thicker white outline.
+                 (2) It wasn't obvious you can tap the map to pick a spot.
+                 Added a floating hint pill over the map ("Tap anywhere...")
+                 that hides once the first search starts, and the mouse
+                 cursor over the map is now a crosshair instead of a hand.
                  (latest change)
 -->
 <html lang="en">
@@ -86,7 +101,30 @@
   #controls button:active { opacity: 0.8; }
 
   #main { display: flex; flex: 1; min-height: 0; flex-direction: column; }
-  #map { flex: 1; min-height: 45vh; }
+  #map { flex: 1; min-height: 45vh; position: relative; }
+
+  /* Soften the basemap so incident pins stand out (Jim's feedback). */
+  #map .leaflet-tile-pane { filter: grayscale(45%) brightness(106%) contrast(94%); }
+  /* Crosshair signals "you can pick a spot here" better than the hand cursor. */
+  #map.leaflet-container { cursor: crosshair; }
+  /* Translucent white veil: above the tiles (z 200), below the pins (z 400). */
+  .map-veil {
+    position: absolute; inset: 0; z-index: 350;
+    background: rgba(255, 255, 255, 0.30);
+    pointer-events: none;
+  }
+  /* Floating hint pill over the map, until the first search begins. */
+  .map-hint {
+    position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+    z-index: 800; pointer-events: none;
+    background: rgba(20, 83, 45, 0.92); color: #fff;
+    font-size: 13px; font-weight: 600; letter-spacing: 0.2px;
+    padding: 9px 16px; border-radius: 999px;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+    max-width: 92%; text-align: center;
+    transition: opacity 0.4s ease;
+  }
+  .map-hint.hidden { opacity: 0; }
   #results {
     background: var(--c-panel); border-top: 1px solid var(--c-border);
     padding: 12px 14px; overflow-y: auto; max-height: 38vh;
@@ -149,7 +187,7 @@
   </header>
 
   <div id="controls">
-    <input id="address" type="text" placeholder="Type an address (e.g., 1 Ferry Building, San Francisco, CA)"
+    <input id="address" type="text" placeholder="Type an address (e.g., 2000 Mission St, San Francisco, CA)"
            autocomplete="street-address" />
     <button id="btnSearch" type="button">Search</button>
     <button id="btnLocate" type="button">&#128205; Use my location</button>
@@ -221,6 +259,25 @@ L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
   maxZoom: 19,
   attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
 }).addTo(map);
+
+// Veil layer: lightens the basemap so incident colors stand out. Sits between
+// the map tiles and the pins, and never blocks taps (pointer-events: none).
+var veil = document.createElement("div");
+veil.className = "map-veil";
+map.getContainer().appendChild(veil);
+
+// Hint pill: tells first-time users they can simply tap the map.
+var mapHint = document.createElement("div");
+mapHint.className = "map-hint";
+mapHint.textContent = "👆 Tap anywhere on the map to check that spot — or search an address above";
+map.getContainer().appendChild(mapHint);
+var hintHidden = false;
+function hideMapHint() {
+  if (hintHidden) return;
+  hintHidden = true;
+  mapHint.classList.add("hidden");
+  setTimeout(function () { if (mapHint.parentNode) mapHint.parentNode.removeChild(mapHint); }, 500);
+}
 
 var markerLayer = L.layerGroup().addTo(map);
 var circleLayer = L.layerGroup().addTo(map);
@@ -343,6 +400,7 @@ daysSelect.addEventListener("change", function () {
 
 // ---------- the core search ----------
 function runSearch(lat, lng, label) {
+  hideMapHint(); // the user clearly knows how to pick a spot now
   currentCenter = { lat: lat, lng: lng, label: label };
   var radiusMiles = parseFloat(radiusSelect.value);
   var days = parseInt(daysSelect.value, 10);
@@ -405,10 +463,10 @@ function renderResult(data, label) {
   ["other", "lesser", "violent", "homicide"].forEach(function (severity) {
     bySeverity[severity].forEach(function (inc) {
       var marker = L.circleMarker([inc.lat, inc.lng], {
-        radius: severity === "homicide" ? 9 : severity === "violent" ? 7 : 6,
-        color: "#ffffff", weight: 1.5,
+        radius: severity === "homicide" ? 10 : severity === "violent" ? 8 : 7,
+        color: "#ffffff", weight: 2,
         fillColor: SEVERITY_COLORS[severity] || SEVERITY_COLORS.other,
-        fillOpacity: 0.9,
+        fillOpacity: 0.95,
         // Without this, tapping a crime pin would ALSO count as tapping the
         // map underneath it and accidentally start a new pin-drop search.
         bubblingMouseEvents: false
