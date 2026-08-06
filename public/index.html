@@ -31,6 +31,10 @@
                  (a landmark name the free geocoders cannot resolve, found
                  during live testing) to a normal street address that always
                  works.
+    2026-08-06 - Town-panel polish: per-1,000 rates always display with one
+                 decimal (e.g., "1.0" instead of "1") for a consistent read.
+                 (Population gaps themselves were fixed server-side in
+                 sources/fbi.js using 2020 Census POP100.)
     2026-08-06 - Phase 2b: (a) SAVED SPOTS - a "Save this spot" button after
                  every search, saved spots appear as one-tap chips under the
                  controls, stored only in this browser (localStorage; no
@@ -682,7 +686,8 @@ function renderTownFallback(fb, message) {
       var comparison = stats.ratePer1000 > nationalRate ? "above" :
                        stats.ratePer1000 < nationalRate ? "below" : "at";
       line += '<li><span style="padding-left:12px">Rate per 1,000 residents</span><span>' +
-              stats.ratePer1000 + " (" + comparison + " the US average of " + nationalRate + ")</span></li>";
+              Number(stats.ratePer1000).toFixed(1) + " (" + comparison + " the US average of " +
+              Number(nationalRate).toFixed(1) + ")</span></li>";
     }
     return line;
   }

@@ -28,7 +28,14 @@
  * Caching: per-state agency lists are cached in memory for 24h to conserve
  *          the API rate limit.
  * Change log:
- *   2026-08-06 - Initial version. (latest change)
+ *   2026-08-06 - Initial version.
+ *   2026-08-06 - Population fix (found live with Wasco, CA): some smaller
+ *                agencies have no population in the FBI response, which left
+ *                the per-1,000 rates blank. The Census reverse geocoder's
+ *                "Census2020_Current" vintage returns POP100 (official 2020
+ *                Census population) in the SAME call we already make, so we
+ *                now capture it and use it whenever the FBI population is
+ *                missing. No extra request, no extra key. (latest change)
  */
 
 "use strict";
@@ -76,13 +83,17 @@ function milesBetween(lat1, lng1, lat2, lng2) {
   return 2 * R * Math.asin(Math.sqrt(a));
 }
 
-/** Coordinates -> { placeName, stateAbbr } via the free Census reverse geocoder. */
+/**
+ * Coordinates -> { placeName, stateAbbr, censusPopulation } via the free
+ * Census reverse geocoder. The Census2020_Current vintage includes POP100
+ * (official 2020 Census population) in the response.
+ */
 async function reverseGeocodePlace(lat, lng) {
   const params = new URLSearchParams({
     x: String(lng),
     y: String(lat),
     benchmark: "Public_AR_Current",
-    vintage: "Current_Current",
+    vintage: "Census2020_Current",
     layers: "Incorporated Places,Census Designated Places",
     format: "json"
   });
@@ -101,7 +112,8 @@ async function reverseGeocodePlace(lat, lng) {
   const placeName = entry.NAME
     .replace(/\s+(city|town|village|borough|municipality|CDP)$/i, "")
     .trim();
-  return { placeName, stateAbbr };
+  const censusPopulation = Number(entry.POP100) > 0 ? Number(entry.POP100) : null;
+  return { placeName, stateAbbr, censusPopulation };
 }
 
 /** Full flattened agency list for a state, cached 24h. */
@@ -237,8 +249,13 @@ async function townLevelFallback(lat, lng) {
       const property = summarizeOffense(await propertyRes.json(), agency.name);
       if (!violent && !property) continue;
 
+      // Prefer the FBI's own population figure; fall back to the official
+      // 2020 Census population when the FBI omits it (common for small towns).
       const population =
-        (violent && violent.population) || (property && property.population) || null;
+        (violent && violent.population) ||
+        (property && property.population) ||
+        place.censusPopulation ||
+        null;
       const per1000 = (count) =>
         population && count !== null && count !== undefined
           ? Math.round((count / population) * 1000 * 10) / 10

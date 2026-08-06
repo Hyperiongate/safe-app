@@ -16,7 +16,9 @@
  *   2026-08-06 - Phase 2: added Chicago adapter checks and FBI town-level
  *                fallback checks (stubbed Census reverse geocoder + FBI
  *                agency list + summarized offense endpoints), plus a
- *                no-API-key unit check. Now 21 checks. (latest change)
+ *                no-API-key unit check.
+ *   2026-08-06 - Added checks for the 2020 Census population fallback (used
+ *                when the FBI omits agency population, e.g. Wasco CA). (latest change)
  */
 
 "use strict";
@@ -102,7 +104,9 @@ function monthlySeries(year, value) {
 const CENSUS_REVERSE_RESPONSE = {
   result: {
     geographies: {
-      "Incorporated Places": [{ NAME: "Sacramento city", STATE: "06", PLACE: "64000" }]
+      "Incorporated Places": [
+        { NAME: "Sacramento city", STATE: "06", PLACE: "64000", POP100: "525000" }
+      ]
     }
   }
 };
@@ -252,6 +256,39 @@ function check(name, condition, extra) {
   check("FBI fallback property count computed (10800)",
     sac.body.fallback && sac.body.fallback.property &&
     sac.body.fallback.property.count === 10800);
+
+  // 4a. Census population fallback: FBI responses WITHOUT population figures
+  // (like Wasco, CA in live testing) must still produce rates via POP100.
+  const fbiDirect = require("./sources/fbi");
+  const originalFetch = global.fetch;
+  global.fetch = async function (url) {
+    const u = String(url);
+    const j = (o) => ({ ok: true, status: 200, json: async () => o, text: async () => JSON.stringify(o) });
+    if (u.includes("geocoder/geographies/coordinates")) {
+      return j({ result: { geographies: { "Incorporated Places": [
+        { NAME: "Wasco city", STATE: "06", PLACE: "83542", POP100: "27047" }
+      ] } } });
+    }
+    if (u.includes("agency/byStateAbbr/")) {
+      return j({ KERN: [{ ori: "CA0150900", agency_name: "Wasco Police Department",
+        agency_type_name: "City", latitude: 35.5941, longitude: -119.4032 }] });
+    }
+    if (u.includes("/violent-crime")) {
+      return j({ offenses: { actuals: { "Wasco Police Department Offenses": monthlySeries(2025, 8) }, rates: {} }, populations: {} });
+    }
+    if (u.includes("/property-crime")) {
+      return j({ offenses: { actuals: { "Wasco Police Department Offenses": monthlySeries(2025, 23) }, rates: {} }, populations: {} });
+    }
+    return { ok: false, status: 404, json: async () => ({}), text: async () => "not stubbed" };
+  };
+  const wasco = await fbiDirect.townLevelFallback(35.5941, -119.4032);
+  global.fetch = originalFetch;
+  check("Census POP100 fills in when FBI omits population",
+    wasco && wasco.population === 27047, wasco ? JSON.stringify(wasco).slice(0, 200) : "null");
+  check("Rates computed from Census population",
+    wasco && wasco.violent && wasco.violent.ratePer1000 === 3.5 &&
+    wasco.property && wasco.property.ratePer1000 === 10.2,
+    wasco ? JSON.stringify({ v: wasco.violent, p: wasco.property }) : "null");
 
   // 4b. Without an API key, the fallback quietly returns null (unit check)
   const fbiModule = require("./sources/fbi");
