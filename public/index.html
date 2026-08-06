@@ -31,6 +31,16 @@
                  (a landmark name the free geocoders cannot resolve, found
                  during live testing) to a normal street address that always
                  works.
+    2026-08-06 - Phase 2b: (a) SAVED SPOTS - a "Save this spot" button after
+                 every search, saved spots appear as one-tap chips under the
+                 controls, stored only in this browser (localStorage; no
+                 accounts). Chips are built with createElement/textContent so
+                 user-typed names can't inject HTML. (b) LANDMARK SEARCH -
+                 if the server's address lookup fails (Render's server can't
+                 reach the OpenStreetMap fallback), the BROWSER queries
+                 OpenStreetMap Nominatim directly (CORS-open, and per-user
+                 requests are that service's preferred usage), so typed
+                 landmarks like "Golden Gate Park" now resolve.
     2026-08-06 - Phase 2: (a) intro text now lists Chicago; (b) uncovered
                  locations can render a "town-wide picture" panel when the
                  server provides the FBI fallback (place name, latest-year
@@ -130,6 +140,30 @@
     transition: opacity 0.4s ease;
   }
   .map-hint.hidden { opacity: 0; }
+
+  /* Saved spots: one-tap chips under the controls. */
+  #savedSpots {
+    background: var(--c-panel); border-bottom: 1px solid var(--c-border);
+    padding: 6px 12px; display: flex; gap: 8px; align-items: center;
+    overflow-x: auto; white-space: nowrap;
+  }
+  #savedSpots .spots-label { font-size: 12px; color: var(--c-muted); flex: 0 0 auto; }
+  .spot-chip {
+    display: inline-flex; align-items: center; gap: 6px; flex: 0 0 auto;
+    background: #eaf1ec; color: var(--c-accent);
+    border: 1px solid #cfe0d4; border-radius: 999px;
+    padding: 5px 10px; font-size: 13px; font-weight: 600; cursor: pointer;
+  }
+  .spot-chip .x {
+    font-weight: 700; opacity: 0.55; cursor: pointer; padding: 0 2px;
+  }
+  .spot-chip .x:hover { opacity: 1; }
+  .save-spot-btn {
+    display: inline-block; margin: 2px 0 10px 0;
+    background: #eaf1ec; color: var(--c-accent);
+    border: 1px solid #cfe0d4; border-radius: 8px;
+    padding: 8px 12px; font-size: 13px; font-weight: 700; cursor: pointer;
+  }
   #results {
     background: var(--c-panel); border-top: 1px solid var(--c-border);
     padding: 12px 14px; overflow-y: auto; max-height: 38vh;
@@ -213,6 +247,8 @@
     </select>
     <div id="spinner"></div>
   </div>
+
+  <div id="savedSpots" style="display:none"></div>
 
   <div id="main">
     <div id="map"></div>
@@ -329,6 +365,84 @@ function radiusLabel() {
   return radiusSelect.options[radiusSelect.selectedIndex].text;
 }
 
+// ---------- saved spots (stored only in this browser; no accounts) ----------
+var savedSpotsEl = document.getElementById("savedSpots");
+
+function loadSpots() {
+  try { return JSON.parse(localStorage.getItem("safe.savedSpots") || "[]"); }
+  catch (e) { return []; } // private-browsing modes can block storage; degrade quietly
+}
+function storeSpots(spots) {
+  try { localStorage.setItem("safe.savedSpots", JSON.stringify(spots)); } catch (e) {}
+}
+function isSpotSaved(lat, lng) {
+  return loadSpots().some(function (s) {
+    return Math.abs(s.lat - lat) < 0.0001 && Math.abs(s.lng - lng) < 0.0001;
+  });
+}
+function renderSpots() {
+  var spots = loadSpots();
+  savedSpotsEl.innerHTML = "";
+  if (!spots.length) { savedSpotsEl.style.display = "none"; return; }
+  savedSpotsEl.style.display = "flex";
+  var label = document.createElement("span");
+  label.className = "spots-label";
+  label.textContent = "Saved:";
+  savedSpotsEl.appendChild(label);
+  spots.forEach(function (spot, index) {
+    var chip = document.createElement("span");
+    chip.className = "spot-chip";
+    var name = document.createElement("span");
+    name.textContent = spot.name; // textContent = safe against HTML injection
+    chip.appendChild(name);
+    var remove = document.createElement("span");
+    remove.className = "x";
+    remove.textContent = "×";
+    remove.title = "Remove this saved spot";
+    remove.addEventListener("click", function (e) {
+      e.stopPropagation();
+      var all = loadSpots();
+      all.splice(index, 1);
+      storeSpots(all);
+      renderSpots();
+    });
+    chip.appendChild(remove);
+    chip.addEventListener("click", function () {
+      runSearch(spot.lat, spot.lng, spot.name);
+    });
+    savedSpotsEl.appendChild(chip);
+  });
+}
+function saveCurrentSpot() {
+  if (!currentCenter) return;
+  var suggested = (currentCenter.label || "My spot").slice(0, 40);
+  var name = window.prompt("Name this spot:", suggested);
+  if (name === null) return; // user cancelled
+  name = name.trim().slice(0, 40) || suggested;
+  var spots = loadSpots();
+  spots.push({ name: name, lat: currentCenter.lat, lng: currentCenter.lng });
+  storeSpots(spots);
+  renderSpots();
+  var btn = document.getElementById("saveSpotBtn");
+  if (btn) { btn.textContent = "✓ Saved"; btn.disabled = true; }
+}
+function addSaveButton() {
+  if (!currentCenter) return;
+  var btn = document.createElement("button");
+  btn.id = "saveSpotBtn";
+  btn.className = "save-spot-btn";
+  btn.type = "button";
+  if (isSpotSaved(currentCenter.lat, currentCenter.lng)) {
+    btn.textContent = "✓ Saved";
+    btn.disabled = true;
+  } else {
+    btn.textContent = "★ Save this spot";
+    btn.addEventListener("click", saveCurrentSpot);
+  }
+  summaryEl.insertBefore(btn, summaryEl.firstChild);
+}
+renderSpots(); // show any previously saved spots on page load
+
 // ---------- geolocation ----------
 btnLocate.addEventListener("click", function () {
   if (!navigator.geolocation) {
@@ -353,6 +467,28 @@ btnLocate.addEventListener("click", function () {
 });
 
 // ---------- address search ----------
+// Landmark fallback: when our server's lookup can't resolve the text (it only
+// handles real street addresses well), the browser asks OpenStreetMap's free
+// Nominatim service directly - that's how "Golden Gate Park" resolves.
+function browserLandmarkLookup(query) {
+  var url = "https://nominatim.openstreetmap.org/search?" +
+    "q=" + encodeURIComponent(query) +
+    "&format=json&countrycodes=us&limit=1";
+  return fetch(url, { headers: { Accept: "application/json" } })
+    .then(function (r) { return r.ok ? r.json() : []; })
+    .then(function (results) {
+      if (Array.isArray(results) && results.length > 0) {
+        return {
+          lat: parseFloat(results[0].lat),
+          lng: parseFloat(results[0].lon),
+          matchedAddress: results[0].display_name || query
+        };
+      }
+      return null;
+    })
+    .catch(function () { return null; });
+}
+
 function searchAddress() {
   var query = addressInput.value.trim();
   if (!query) {
@@ -364,12 +500,21 @@ function searchAddress() {
   fetch("/api/geocode?q=" + encodeURIComponent(query))
     .then(function (r) { return r.json().then(function (data) { return { ok: r.ok, data: data }; }); })
     .then(function (result) {
-      if (!result.ok) {
-        setBusy(false);
-        setStatus(result.data.error || "Could not find that address.", true);
+      if (result.ok) {
+        runSearch(result.data.lat, result.data.lng, result.data.matchedAddress);
         return;
       }
-      runSearch(result.data.lat, result.data.lng, result.data.matchedAddress);
+      // Server couldn't resolve it - try the browser-side landmark lookup.
+      setStatus("Checking landmarks and place names...");
+      return browserLandmarkLookup(query).then(function (place) {
+        if (place && isFinite(place.lat) && isFinite(place.lng)) {
+          runSearch(place.lat, place.lng, place.matchedAddress);
+        } else {
+          setBusy(false);
+          setStatus((result.data.error || "Could not find that address.") +
+            " Tip: you can also just tap the exact spot on the map.", true);
+        }
+      });
     })
     .catch(function () {
       setBusy(false);
@@ -522,6 +667,7 @@ function renderResult(data, label) {
   html += '<div class="attribution">' + escapeHtml(data.attribution || "") +
           " &middot; Locations are approximate (police reports are mapped to blocks/intersections to protect privacy).</div>";
   summaryEl.innerHTML = html;
+  addSaveButton();
 }
 
 // Town-wide picture for places without street-level pins (FBI annual data).
@@ -557,6 +703,7 @@ function renderTownFallback(fb, message) {
           "Street-level detail for this area is on the roadmap.</div>";
   html += '<div class="attribution">' + escapeHtml(fb.attribution || "") + "</div>";
   summaryEl.innerHTML = html;
+  addSaveButton();
 }
 </script>
 </body>
