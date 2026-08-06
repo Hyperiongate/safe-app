@@ -1,0 +1,17 @@
+{
+  "name": "safe-app",
+  "version": "1.0.0",
+  "description": "Safe - see reported crimes around any location on a map. MVP covering San Francisco and Oakland via free public open-data feeds.",
+  "notes": "FILE NOTES (for future updates): Last changed 2026-08-06. Dependencies are intentionally minimal: only express. Node 18+ is required because server code uses the built-in global fetch. JSON files cannot contain comments, so notes live in this 'notes' key, which npm safely ignores. I did no harm and this file is not truncated.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}

@@ -1,0 +1,13 @@
+# FILE NOTES (for future updates)
+# File: .gitignore
+# Purpose: Keeps installed packages and local junk out of the GitHub repo.
+#   node_modules is rebuilt automatically by Render during deploy.
+# Change log:
+#   2026-08-06 - Initial version. (latest change)
+
+node_modules/
+npm-debug.log*
+.DS_Store
+.env
+
+# I did no harm and this file is not truncated

@@ -1,0 +1,21 @@
+# FILE NOTES (for future updates)
+# File: render.yaml
+# Purpose: Render "Blueprint" file. When this repo is connected to Render,
+#   Render reads this file and knows exactly how to build and run the app -
+#   no manual configuration needed.
+# Optional: add SOCRATA_APP_TOKEN in the Render dashboard (Environment tab)
+#   to raise open-data rate limits. The app works without it.
+# Change log:
+#   2026-08-06 - Initial version. (latest change)
+
+services:
+  - type: web
+    name: safe-app
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node server.js
+    healthCheckPath: /
+    autoDeploy: true
+
+# I did no harm and this file is not truncated

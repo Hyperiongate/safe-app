@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<!--
+  FILE NOTES (for future updates)
+  File: public/index.html
+  Purpose: The entire Safe frontend in one self-contained file (HTML + CSS + JS).
+    - Map: Leaflet 1.9.4 served from our OWN app (public/vendor/leaflet/) so
+      the app never depends on a third-party CDN being reachable. Map tiles
+      are free OpenStreetMap tiles (no key).
+    - "Use my location" uses the browser's GPS (requires HTTPS - Render provides it).
+    - Typed addresses go to our own backend at /api/geocode (free US Census
+      geocoder with OpenStreetMap fallback - no key).
+    - Crime pins come from our backend at /api/crimes which routes the point
+      to the right city data adapter (San Francisco, Oakland, more later).
+    - Pin colors per Jim's spec: red = homicide/murder, blue = violent crime /
+      felony, yellow = property crime / misdemeanor, gray = other incidents.
+    - Layout is mobile-first: controls on top, map in the middle, results
+      panel below the map (scrolls). On wide screens the results panel moves
+      to a right-hand sidebar.
+  No build step, no frameworks - deliberately simple to deploy anywhere.
+  Change log:
+    2026-08-06 - Initial version.
+    2026-08-06 - Switched Leaflet from CDN to self-hosted files in
+                 public/vendor/leaflet/ for reliability, added inline favicon,
+                 added a friendly guard if the map library fails to load.
+                 (latest change)
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Safe - How safe is this spot?</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='45' fill='%2314532d'/%3E%3Ccircle cx='50' cy='42' r='16' fill='%23fff'/%3E%3Cpath d='M50 92 L28 58 a27 27 0 1 1 44 0 Z' fill='%2314532d'/%3E%3Ccircle cx='50' cy='42' r='12' fill='%23fff'/%3E%3C/svg%3E" />
+<link rel="stylesheet" href="vendor/leaflet/leaflet.css" />
+<style>
+  :root {
+    --c-homicide: #d81b2f;
+    --c-violent: #1d5fd6;
+    --c-lesser: #e6b400;
+    --c-other: #7a7a7a;
+    --c-bg: #f7f7f5;
+    --c-panel: #ffffff;
+    --c-text: #1d1d1f;
+    --c-muted: #6b6b6f;
+    --c-accent: #14532d;
+    --c-border: #e3e3df;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--c-bg); color: var(--c-text);
+  }
+  #app { display: flex; flex-direction: column; height: 100%; }
+
+  header {
+    background: var(--c-accent); color: #fff;
+    padding: 10px 14px; display: flex; align-items: baseline; gap: 10px;
+  }
+  header h1 { font-size: 20px; margin: 0; letter-spacing: 0.5px; }
+  header .tagline { font-size: 12px; opacity: 0.85; }
+
+  #controls {
+    background: var(--c-panel); border-bottom: 1px solid var(--c-border);
+    padding: 10px 12px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+  }
+  #controls input[type="text"] {
+    flex: 1 1 220px; min-width: 160px;
+    padding: 10px 12px; font-size: 15px;
+    border: 1px solid var(--c-border); border-radius: 8px;
+  }
+  #controls select {
+    padding: 10px 8px; font-size: 14px;
+    border: 1px solid var(--c-border); border-radius: 8px; background: #fff;
+  }
+  #controls button {
+    padding: 10px 14px; font-size: 14px; font-weight: 600;
+    border: none; border-radius: 8px; cursor: pointer;
+  }
+  #btnSearch { background: var(--c-accent); color: #fff; }
+  #btnLocate { background: #eaf1ec; color: var(--c-accent); }
+  #controls button:active { opacity: 0.8; }
+
+  #main { display: flex; flex: 1; min-height: 0; flex-direction: column; }
+  #map { flex: 1; min-height: 45vh; }
+  #results {
+    background: var(--c-panel); border-top: 1px solid var(--c-border);
+    padding: 12px 14px; overflow-y: auto; max-height: 38vh;
+  }
+  @media (min-width: 900px) {
+    #main { flex-direction: row; }
+    #map { min-height: 0; }
+    #results {
+      width: 360px; max-height: none; border-top: none;
+      border-left: 1px solid var(--c-border);
+    }
+  }
+
+  #status { font-size: 14px; color: var(--c-muted); margin: 0 0 8px 0; }
+  #status.error { color: #b00020; font-weight: 600; }
+
+  .summary-title { font-size: 16px; font-weight: 700; margin: 4px 0 8px 0; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+  .chip {
+    display: flex; align-items: center; gap: 7px;
+    background: var(--c-bg); border: 1px solid var(--c-border);
+    border-radius: 999px; padding: 6px 12px; font-size: 13px;
+  }
+  .chip .dot { width: 12px; height: 12px; border-radius: 50%; flex: 0 0 auto; }
+  .chip b { font-size: 15px; }
+
+  .cat-list { margin: 6px 0 10px 0; padding: 0; list-style: none; font-size: 13px; }
+  .cat-list li {
+    display: flex; justify-content: space-between; gap: 10px;
+    padding: 4px 0; border-bottom: 1px dashed var(--c-border);
+  }
+  .cat-list li span:last-child { font-weight: 700; }
+
+  .note {
+    font-size: 12px; color: var(--c-muted); background: #fbf7ea;
+    border: 1px solid #eadfb8; border-radius: 8px; padding: 8px 10px; margin: 8px 0;
+  }
+  .attribution { font-size: 11px; color: var(--c-muted); margin-top: 10px; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; color: var(--c-muted); margin-top: 6px; }
+  .legend .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-right: 4px; vertical-align: -1px; }
+
+  .popup-cat { font-weight: 700; font-size: 14px; margin-bottom: 2px; }
+  .popup-line { font-size: 12px; color: #444; }
+
+  #spinner {
+    display: none; margin-left: 4px;
+    width: 16px; height: 16px; border-radius: 50%;
+    border: 3px solid #cfe0d4; border-top-color: var(--c-accent);
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>Safe</h1>
+    <span class="tagline">How safe is this spot? Reported crimes around any address.</span>
+  </header>
+
+  <div id="controls">
+    <input id="address" type="text" placeholder="Type an address (e.g., 1 Ferry Building, San Francisco, CA)"
+           autocomplete="street-address" />
+    <button id="btnSearch" type="button">Search</button>
+    <button id="btnLocate" type="button">&#128205; Use my location</button>
+    <select id="radius" title="Search radius">
+      <option value="0.25" selected>&frac14; mile</option>
+      <option value="0.5">&frac12; mile</option>
+      <option value="1">1 mile</option>
+      <option value="2">2 miles</option>
+      <option value="3">3 miles</option>
+      <option value="5">5 miles</option>
+    </select>
+    <select id="days" title="Time window">
+      <option value="7" selected>Last week</option>
+      <option value="30">Last month</option>
+      <option value="90">Last 3 months</option>
+      <option value="180">Last 6 months</option>
+      <option value="365">Last year</option>
+    </select>
+    <div id="spinner"></div>
+  </div>
+
+  <div id="main">
+    <div id="map"></div>
+    <div id="results">
+      <p id="status">Search an address or tap "Use my location" to see reported crimes nearby.
+        Currently covering <b>San Francisco</b> and <b>Oakland</b> - more cities coming.</p>
+      <div class="legend">
+        <span><span class="dot" style="background:var(--c-homicide)"></span>Homicide / Murder</span>
+        <span><span class="dot" style="background:var(--c-violent)"></span>Violent crime / Felony</span>
+        <span><span class="dot" style="background:var(--c-lesser)"></span>Property / Misdemeanor</span>
+        <span><span class="dot" style="background:var(--c-other)"></span>Other incident</span>
+      </div>
+      <div id="summary"></div>
+    </div>
+  </div>
+</div>
+
+<script src="vendor/leaflet/leaflet.js"></script>
+<script>
+"use strict";
+
+// Friendly guard: if the map library somehow failed to load, explain instead of crashing.
+if (typeof L === "undefined") {
+  document.getElementById("status").textContent =
+    "The map couldn't load. Please refresh the page; if it keeps happening, the app files may be missing the vendor/leaflet folder.";
+  document.getElementById("status").className = "error";
+  throw new Error("Leaflet failed to load");
+}
+
+// ---------- constants ----------
+var SEVERITY_COLORS = {
+  homicide: "#d81b2f",
+  violent: "#1d5fd6",
+  lesser: "#e6b400",
+  other: "#7a7a7a"
+};
+var SEVERITY_LABELS = {
+  homicide: "Homicide / Murder",
+  violent: "Violent crime / Felony",
+  lesser: "Property / Misdemeanor",
+  other: "Other incident"
+};
+var SEVERITY_ORDER = ["homicide", "violent", "lesser", "other"];
+
+// ---------- map setup ----------
+var map = L.map("map").setView([37.7793, -122.4193], 13); // start over San Francisco
+L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  maxZoom: 19,
+  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+}).addTo(map);
+
+var markerLayer = L.layerGroup().addTo(map);
+var circleLayer = L.layerGroup().addTo(map);
+var centerMarker = null;
+var currentCenter = null; // {lat, lng, label}
+
+// ---------- element handles ----------
+var addressInput = document.getElementById("address");
+var btnSearch = document.getElementById("btnSearch");
+var btnLocate = document.getElementById("btnLocate");
+var radiusSelect = document.getElementById("radius");
+var daysSelect = document.getElementById("days");
+var statusEl = document.getElementById("status");
+var summaryEl = document.getElementById("summary");
+var spinnerEl = document.getElementById("spinner");
+
+// ---------- small helpers ----------
+function setStatus(message, isError) {
+  statusEl.textContent = message;
+  statusEl.className = isError ? "error" : "";
+}
+function setBusy(busy) {
+  spinnerEl.style.display = busy ? "inline-block" : "none";
+  btnSearch.disabled = busy;
+  btnLocate.disabled = busy;
+}
+function escapeHtml(text) {
+  var div = document.createElement("div");
+  div.textContent = text == null ? "" : String(text);
+  return div.innerHTML;
+}
+function formatWhen(isoString) {
+  if (!isoString) return "Date unknown";
+  var d = new Date(isoString);
+  if (isNaN(d.getTime())) return isoString;
+  return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" }) +
+         " " + d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+}
+function timeWindowLabel() {
+  return daysSelect.options[daysSelect.selectedIndex].text.toLowerCase();
+}
+function radiusLabel() {
+  return radiusSelect.options[radiusSelect.selectedIndex].text;
+}
+
+// ---------- geolocation ----------
+btnLocate.addEventListener("click", function () {
+  if (!navigator.geolocation) {
+    setStatus("Your browser doesn't support location. Please type an address instead.", true);
+    return;
+  }
+  setBusy(true);
+  setStatus("Finding your location...");
+  navigator.geolocation.getCurrentPosition(
+    function (position) {
+      runSearch(position.coords.latitude, position.coords.longitude, "your location");
+    },
+    function (geoError) {
+      setBusy(false);
+      var msg = "Couldn't get your location";
+      if (geoError && geoError.code === 1) msg += " - permission was denied. You can type an address instead.";
+      else msg += ". You can type an address instead.";
+      setStatus(msg, true);
+    },
+    { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 }
+  );
+});
+
+// ---------- address search ----------
+function searchAddress() {
+  var query = addressInput.value.trim();
+  if (!query) {
+    setStatus("Type an address first, or use the location button.", true);
+    return;
+  }
+  setBusy(true);
+  setStatus("Looking up that address...");
+  fetch("/api/geocode?q=" + encodeURIComponent(query))
+    .then(function (r) { return r.json().then(function (data) { return { ok: r.ok, data: data }; }); })
+    .then(function (result) {
+      if (!result.ok) {
+        setBusy(false);
+        setStatus(result.data.error || "Could not find that address.", true);
+        return;
+      }
+      runSearch(result.data.lat, result.data.lng, result.data.matchedAddress);
+    })
+    .catch(function () {
+      setBusy(false);
+      setStatus("The address lookup didn't respond. Please try again.", true);
+    });
+}
+btnSearch.addEventListener("click", searchAddress);
+addressInput.addEventListener("keydown", function (e) {
+  if (e.key === "Enter") searchAddress();
+});
+
+// Re-run the search when radius or time window changes (if we have a center).
+radiusSelect.addEventListener("change", function () {
+  if (currentCenter) runSearch(currentCenter.lat, currentCenter.lng, currentCenter.label);
+});
+daysSelect.addEventListener("change", function () {
+  if (currentCenter) runSearch(currentCenter.lat, currentCenter.lng, currentCenter.label);
+});
+
+// ---------- the core search ----------
+function runSearch(lat, lng, label) {
+  currentCenter = { lat: lat, lng: lng, label: label };
+  var radiusMiles = parseFloat(radiusSelect.value);
+  var days = parseInt(daysSelect.value, 10);
+
+  setBusy(true);
+  setStatus("Loading reported crimes within " + radiusLabel() + " (" + timeWindowLabel() + ")...");
+
+  fetch("/api/crimes?lat=" + lat + "&lng=" + lng +
+        "&radiusMiles=" + radiusMiles + "&days=" + days)
+    .then(function (r) { return r.json().then(function (data) { return { ok: r.ok, data: data }; }); })
+    .then(function (result) {
+      setBusy(false);
+      if (!result.ok) {
+        setStatus(result.data.error || "Something went wrong loading crime data.", true);
+        return;
+      }
+      renderResult(result.data, label);
+    })
+    .catch(function () {
+      setBusy(false);
+      setStatus("Couldn't reach the server. Please check your connection and try again.", true);
+    });
+}
+
+function drawCenterAndCircle(lat, lng, radiusMiles) {
+  circleLayer.clearLayers();
+  if (centerMarker) { map.removeLayer(centerMarker); centerMarker = null; }
+  centerMarker = L.marker([lat, lng]).addTo(map);
+  L.circle([lat, lng], {
+    radius: radiusMiles * 1609.344,
+    color: "#14532d", weight: 2, fillColor: "#14532d", fillOpacity: 0.06
+  }).addTo(circleLayer);
+  var zoom = radiusMiles <= 0.3 ? 16 : radiusMiles <= 0.6 ? 15 : radiusMiles <= 1.2 ? 14 : radiusMiles <= 2.5 ? 13 : 12;
+  map.setView([lat, lng], zoom);
+}
+
+function renderResult(data, label) {
+  markerLayer.clearLayers();
+  summaryEl.innerHTML = "";
+
+  var lat = currentCenter.lat, lng = currentCenter.lng;
+  var radiusMiles = parseFloat(radiusSelect.value);
+  drawCenterAndCircle(lat, lng, radiusMiles);
+
+  if (!data.covered) {
+    setStatus(data.message, true);
+    return;
+  }
+
+  // Pins - draw lesser first so the worst crimes sit on top and stay visible.
+  var bySeverity = { other: [], lesser: [], violent: [], homicide: [] };
+  data.incidents.forEach(function (inc) {
+    (bySeverity[inc.severity] || bySeverity.other).push(inc);
+  });
+  ["other", "lesser", "violent", "homicide"].forEach(function (severity) {
+    bySeverity[severity].forEach(function (inc) {
+      var marker = L.circleMarker([inc.lat, inc.lng], {
+        radius: severity === "homicide" ? 9 : severity === "violent" ? 7 : 6,
+        color: "#ffffff", weight: 1.5,
+        fillColor: SEVERITY_COLORS[severity] || SEVERITY_COLORS.other,
+        fillOpacity: 0.9
+      });
+      var popupHtml =
+        '<div class="popup-cat" style="color:' + (SEVERITY_COLORS[severity] || "#333") + '">' +
+        escapeHtml(inc.category) + "</div>" +
+        '<div class="popup-line">' + escapeHtml(inc.description) + "</div>" +
+        '<div class="popup-line">' + escapeHtml(formatWhen(inc.datetime)) + "</div>" +
+        (inc.approxLocation ? '<div class="popup-line">Near: ' + escapeHtml(inc.approxLocation) + "</div>" : "") +
+        (inc.area ? '<div class="popup-line">Area: ' + escapeHtml(inc.area) + "</div>" : "") +
+        (inc.resolution ? '<div class="popup-line">Status: ' + escapeHtml(inc.resolution) + "</div>" : "");
+      marker.bindPopup(popupHtml);
+      marker.addTo(markerLayer);
+    });
+  });
+
+  // Status line + summary panel.
+  setStatus("Showing " + data.totalShown + " reported incident" + (data.totalShown === 1 ? "" : "s") +
+    " within " + radiusLabel() + " of " + (label || "the selected point") +
+    " (" + timeWindowLabel() + ") - " + data.city + ".");
+
+  var html = '<div class="summary-title">Safety snapshot</div><div class="chips">';
+  SEVERITY_ORDER.forEach(function (severity) {
+    var count = data.counts[severity] || 0;
+    html += '<span class="chip"><span class="dot" style="background:' + SEVERITY_COLORS[severity] + '"></span>' +
+            escapeHtml(SEVERITY_LABELS[severity]) + " <b>" + count + "</b></span>";
+  });
+  html += "</div>";
+
+  if (data.topCategories && data.topCategories.length > 0) {
+    html += '<div class="summary-title" style="font-size:14px">Most common in this circle</div><ul class="cat-list">';
+    data.topCategories.forEach(function (item) {
+      html += "<li><span>" + escapeHtml(item.category) + "</span><span>" + item.count + "</span></li>";
+    });
+    html += "</ul>";
+  }
+
+  (data.notes || []).forEach(function (note) {
+    html += '<div class="note">' + escapeHtml(note) + "</div>";
+  });
+
+  html += '<div class="attribution">' + escapeHtml(data.attribution || "") +
+          " &middot; Locations are approximate (police reports are mapped to blocks/intersections to protect privacy).</div>";
+  summaryEl.innerHTML = html;
+}
+</script>
+</body>
+<!-- I did no harm and this file is not truncated -->
+</html>
