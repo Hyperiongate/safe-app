@@ -31,6 +31,14 @@
                  (a landmark name the free geocoders cannot resolve, found
                  during live testing) to a normal street address that always
                  works.
+    2026-08-06 - Jim's feedback: searches take a few seconds and nothing
+                 visibly happened at first, tempting a second click. Fixes:
+                 (1) the green pin + circle now drop INSTANTLY when you tap
+                 (before any data loads), (2) a large "Checking this spot..."
+                 card with a spinner appears centered on the map while
+                 loading, (3) a request sequence number ignores stale
+                 responses if the user taps a new spot mid-load. One tap is
+                 all that's ever needed.
     2026-08-06 - Town-panel polish: per-1,000 rates always display with one
                  decimal (e.g., "1.0" instead of "1") for a consistent read.
                  (Population gaps themselves were fixed server-side in
@@ -144,6 +152,22 @@
     transition: opacity 0.4s ease;
   }
   .map-hint.hidden { opacity: 0; }
+
+  /* Big, unmissable "working on it" card, centered on the map. */
+  .map-loading {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    z-index: 900; pointer-events: none;
+    background: rgba(255, 255, 255, 0.96); color: var(--c-accent);
+    border: 2px solid var(--c-accent); border-radius: 14px;
+    padding: 16px 22px; font-size: 16px; font-weight: 700;
+    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.3);
+    display: flex; align-items: center; gap: 12px;
+  }
+  .map-loading .big-spinner {
+    width: 22px; height: 22px; border-radius: 50%; flex: 0 0 auto;
+    border: 4px solid #cfe0d4; border-top-color: var(--c-accent);
+    animation: spin 0.8s linear infinite;
+  }
 
   /* Saved spots: one-tap chips under the controls. */
   #savedSpots {
@@ -329,6 +353,23 @@ var markerLayer = L.layerGroup().addTo(map);
 var circleLayer = L.layerGroup().addTo(map);
 var centerMarker = null;
 var currentCenter = null; // {lat, lng, label}
+var searchSeq = 0;        // ignores stale responses when a newer search starts
+
+// Large centered loading card (created once, shown/hidden as needed).
+var mapLoadingEl = document.createElement("div");
+mapLoadingEl.className = "map-loading";
+mapLoadingEl.style.display = "none";
+var mapLoadingSpinner = document.createElement("span");
+mapLoadingSpinner.className = "big-spinner";
+var mapLoadingText = document.createElement("span");
+mapLoadingEl.appendChild(mapLoadingSpinner);
+mapLoadingEl.appendChild(mapLoadingText);
+map.getContainer().appendChild(mapLoadingEl);
+function showMapLoading(message) {
+  mapLoadingText.textContent = message;
+  mapLoadingEl.style.display = "flex";
+}
+function hideMapLoading() { mapLoadingEl.style.display = "none"; }
 
 // ---------- element handles ----------
 var addressInput = document.getElementById("address");
@@ -455,12 +496,14 @@ btnLocate.addEventListener("click", function () {
   }
   setBusy(true);
   setStatus("Finding your location...");
+  showMapLoading("Finding your location...");
   navigator.geolocation.getCurrentPosition(
     function (position) {
       runSearch(position.coords.latitude, position.coords.longitude, "your location");
     },
     function (geoError) {
       setBusy(false);
+      hideMapLoading();
       var msg = "Couldn't get your location";
       if (geoError && geoError.code === 1) msg += " - permission was denied. You can type an address instead.";
       else msg += ". You can type an address instead.";
@@ -501,6 +544,7 @@ function searchAddress() {
   }
   setBusy(true);
   setStatus("Looking up that address...");
+  showMapLoading("Finding that address...");
   fetch("/api/geocode?q=" + encodeURIComponent(query))
     .then(function (r) { return r.json().then(function (data) { return { ok: r.ok, data: data }; }); })
     .then(function (result) {
@@ -510,11 +554,13 @@ function searchAddress() {
       }
       // Server couldn't resolve it - try the browser-side landmark lookup.
       setStatus("Checking landmarks and place names...");
+      showMapLoading("Checking landmarks...");
       return browserLandmarkLookup(query).then(function (place) {
         if (place && isFinite(place.lat) && isFinite(place.lng)) {
           runSearch(place.lat, place.lng, place.matchedAddress);
         } else {
           setBusy(false);
+          hideMapLoading();
           setStatus((result.data.error || "Could not find that address.") +
             " Tip: you can also just tap the exact spot on the map.", true);
         }
@@ -522,6 +568,7 @@ function searchAddress() {
     })
     .catch(function () {
       setBusy(false);
+      hideMapLoading();
       setStatus("The address lookup didn't respond. Please try again.", true);
     });
 }
@@ -559,7 +606,13 @@ function runSearch(lat, lng, label) {
   currentCenter = { lat: lat, lng: lng, label: label };
   var radiusMiles = parseFloat(radiusSelect.value);
   var days = parseInt(daysSelect.value, 10);
+  var seq = ++searchSeq; // any response from an older search will be ignored
 
+  // INSTANT feedback: drop the pin and circle immediately, before any data
+  // arrives, and show the big loading card - one tap is all that's needed.
+  markerLayer.clearLayers();
+  drawCenterAndCircle(lat, lng, radiusMiles);
+  showMapLoading("Checking this spot...");
   setBusy(true);
   setStatus("Loading reported crimes within " + radiusLabel() + " (" + timeWindowLabel() + ")...");
 
@@ -567,6 +620,8 @@ function runSearch(lat, lng, label) {
         "&radiusMiles=" + radiusMiles + "&days=" + days)
     .then(function (r) { return r.json().then(function (data) { return { ok: r.ok, data: data }; }); })
     .then(function (result) {
+      if (seq !== searchSeq) return; // a newer search took over - drop this one
+      hideMapLoading();
       setBusy(false);
       if (!result.ok) {
         setStatus(result.data.error || "Something went wrong loading crime data.", true);
@@ -575,6 +630,8 @@ function runSearch(lat, lng, label) {
       renderResult(result.data, label);
     })
     .catch(function () {
+      if (seq !== searchSeq) return;
+      hideMapLoading();
       setBusy(false);
       setStatus("Couldn't reach the server. Please check your connection and try again.", true);
     });
@@ -598,12 +655,10 @@ function drawCenterAndCircle(lat, lng, radiusMiles) {
 }
 
 function renderResult(data, label) {
+  // (The center pin, circle, and map view were already drawn the instant the
+  // search started - see runSearch.)
   markerLayer.clearLayers();
   summaryEl.innerHTML = "";
-
-  var lat = currentCenter.lat, lng = currentCenter.lng;
-  var radiusMiles = parseFloat(radiusSelect.value);
-  drawCenterAndCircle(lat, lng, radiusMiles);
 
   if (!data.covered) {
     if (data.fallback) {
