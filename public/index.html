@@ -31,6 +31,17 @@
                  (a landmark name the free geocoders cannot resolve, found
                  during live testing) to a normal street address that always
                  works.
+    2026-08-06 - COMPARISON VIEW (house-hunting feature): a "Compare with
+                 another spot" button appears after every result. Tap it,
+                 pick a second location any way you like (search, tap the
+                 map, GPS, or a saved chip), and the results panel becomes a
+                 side-by-side table - lower number in each row highlighted
+                 green. Two pin-covered spots compare severity counts (same
+                 radius/window); two town-fallback spots compare per-1,000
+                 rates; a mixed pair shows both pictures stacked with an
+                 honest note that the measures differ. "Exit compare"
+                 restores the normal view of the latest spot. While
+                 comparing, each new search replaces spot 2.
     2026-08-06 - Jim's feedback: searches take a few seconds and nothing
                  visibly happened at first, tempting a second click. Fixes:
                  (1) the green pin + circle now drop INSTANTLY when you tap
@@ -192,6 +203,24 @@
     border: 1px solid #cfe0d4; border-radius: 8px;
     padding: 8px 12px; font-size: 13px; font-weight: 700; cursor: pointer;
   }
+  .compare-btn {
+    display: inline-block; margin: 2px 0 10px 8px;
+    background: #fff; color: var(--c-accent);
+    border: 1px solid var(--c-accent); border-radius: 8px;
+    padding: 8px 12px; font-size: 13px; font-weight: 700; cursor: pointer;
+  }
+  .compare-table { width: 100%; border-collapse: collapse; font-size: 13px; margin: 6px 0 10px 0; }
+  .compare-table th, .compare-table td {
+    padding: 6px 6px; border-bottom: 1px dashed var(--c-border); text-align: right;
+  }
+  .compare-table th:first-child, .compare-table td:first-child { text-align: left; }
+  .compare-table th { font-size: 12px; color: var(--c-muted); vertical-align: bottom; }
+  .compare-table td.better { background: #e7f4ea; font-weight: 700; color: #14532d; }
+  .compare-card {
+    border: 1px solid var(--c-border); border-radius: 10px;
+    padding: 10px 12px; margin: 8px 0; background: var(--c-bg);
+  }
+  .compare-card .cc-title { font-weight: 700; font-size: 14px; margin-bottom: 4px; }
   #results {
     background: var(--c-panel); border-top: 1px solid var(--c-border);
     padding: 12px 14px; overflow-y: auto; max-height: 38vh;
@@ -488,6 +517,137 @@ function addSaveButton() {
 }
 renderSpots(); // show any previously saved spots on page load
 
+// ---------- comparison view state ----------
+var compareA = null;     // snapshot of spot 1 while comparing
+var inCompare = false;   // true between "Compare" tap and "Exit compare"
+var lastSnapshot = null; // snapshot of the most recent result (any type)
+var lastRaw = null;      // {kind:'pins'|'town', data/fb, label} to restore on exit
+
+function snapshotPins(data, label) {
+  return {
+    type: "pins", label: label || "the selected point", city: data.city,
+    radius: radiusLabel(), window: timeWindowLabel(),
+    counts: data.counts, total: data.totalShown
+  };
+}
+function snapshotTown(fb, label) {
+  return {
+    type: "town", label: label || "the selected point",
+    place: fb.placeName + ", " + fb.stateAbbr, year: fb.year,
+    population: fb.population,
+    violentCount: fb.violent ? fb.violent.count : null,
+    violentRate: fb.violent ? fb.violent.ratePer1000 : null,
+    propertyCount: fb.property ? fb.property.count : null,
+    propertyRate: fb.property ? fb.property.ratePer1000 : null
+  };
+}
+function addCompareButton() {
+  var btn = document.createElement("button");
+  btn.className = "compare-btn";
+  btn.type = "button";
+  btn.textContent = "⚖ Compare with another spot";
+  btn.addEventListener("click", function () {
+    compareA = lastSnapshot;
+    inCompare = true;
+    setStatus("Spot 1 locked in: " + (compareA.type === "pins" ? compareA.label : compareA.place) +
+      ". Now pick the second spot - search an address, tap the map, use your location, or tap a saved spot.");
+  });
+  summaryEl.appendChild(btn);
+}
+function exitCompare() {
+  inCompare = false;
+  compareA = null;
+  if (lastRaw) { // repaint the latest spot the normal way
+    if (lastRaw.kind === "pins") renderResult(lastRaw.data, lastRaw.label);
+    else renderTownFallback(lastRaw.fb, lastRaw.message, lastRaw.label);
+  }
+}
+function betterClass(a, b, colA) {
+  // Lower crime number is "better". Returns the css class for column A or B.
+  if (a === null || a === undefined || b === null || b === undefined) return "";
+  if (Number(a) === Number(b)) return "";
+  var aWins = Number(a) < Number(b);
+  return (colA ? aWins : !aWins) ? "better" : "";
+}
+function compareHeaderLabel(snap) {
+  var name = snap.type === "pins" ? snap.label : snap.place;
+  return String(name).length > 28 ? String(name).slice(0, 28) + "…" : String(name);
+}
+function renderComparison(A, B) {
+  // If both spots carry the same generic label ("your dropped pin"), number
+  // them so the columns are tellable-apart.
+  var nameA = compareHeaderLabel(A), nameB = compareHeaderLabel(B);
+  if (nameA === nameB) { nameA = "Spot 1 - " + nameA; nameB = "Spot 2 - " + nameB; }
+  A = Object.assign({}, A, A.type === "pins" ? { label: nameA } : { place: nameA });
+  B = Object.assign({}, B, B.type === "pins" ? { label: nameB } : { place: nameB });
+
+  var html = '<div class="summary-title">Side-by-side comparison</div>';
+
+  if (A.type === "pins" && B.type === "pins") {
+    var sameSettings = A.radius === B.radius && A.window === B.window;
+    html += '<table class="compare-table"><tr><th></th><th>' +
+      escapeHtml(compareHeaderLabel(A)) + "<br>(" + escapeHtml(A.radius) + ", " + escapeHtml(A.window) + ")</th><th>" +
+      escapeHtml(compareHeaderLabel(B)) + "<br>(" + escapeHtml(B.radius) + ", " + escapeHtml(B.window) + ")</th></tr>";
+    SEVERITY_ORDER.forEach(function (sev) {
+      var a = (A.counts && A.counts[sev]) || 0, b = (B.counts && B.counts[sev]) || 0;
+      html += "<tr><td>" + escapeHtml(SEVERITY_LABELS[sev]) + "</td>" +
+        '<td class="' + betterClass(a, b, true) + '">' + a + "</td>" +
+        '<td class="' + betterClass(a, b, false) + '">' + b + "</td></tr>";
+    });
+    html += "<tr><td><b>Total incidents</b></td>" +
+      '<td class="' + betterClass(A.total, B.total, true) + '"><b>' + A.total + "</b></td>" +
+      '<td class="' + betterClass(A.total, B.total, false) + '"><b>' + B.total + "</b></td></tr></table>";
+    if (!sameSettings) {
+      html += '<div class="note">Heads up: the two spots were checked with different radius or time settings (shown under each name), so compare with care.</div>';
+    }
+  } else if (A.type === "town" && B.type === "town") {
+    html += '<table class="compare-table"><tr><th></th><th>' +
+      escapeHtml(compareHeaderLabel(A)) + " (" + escapeHtml(A.year || "?") + ")</th><th>" +
+      escapeHtml(compareHeaderLabel(B)) + " (" + escapeHtml(B.year || "?") + ")</th></tr>";
+    html += "<tr><td>Population</td><td>" +
+      (A.population ? Number(A.population).toLocaleString() : "n/a") + "</td><td>" +
+      (B.population ? Number(B.population).toLocaleString() : "n/a") + "</td></tr>";
+    html += "<tr><td>Violent crime rate /1,000</td>" +
+      '<td class="' + betterClass(A.violentRate, B.violentRate, true) + '">' + (A.violentRate !== null ? Number(A.violentRate).toFixed(1) : "n/a") + "</td>" +
+      '<td class="' + betterClass(A.violentRate, B.violentRate, false) + '">' + (B.violentRate !== null ? Number(B.violentRate).toFixed(1) : "n/a") + "</td></tr>";
+    html += "<tr><td>Property crime rate /1,000</td>" +
+      '<td class="' + betterClass(A.propertyRate, B.propertyRate, true) + '">' + (A.propertyRate !== null ? Number(A.propertyRate).toFixed(1) : "n/a") + "</td>" +
+      '<td class="' + betterClass(A.propertyRate, B.propertyRate, false) + '">' + (B.propertyRate !== null ? Number(B.propertyRate).toFixed(1) : "n/a") + "</td></tr></table>";
+    html += '<div class="note">Green = lower rate. Annual town-wide FBI figures; rates are per 1,000 residents (US averages: violent 3.6, property 19.2).</div>';
+  } else {
+    // Mixed: one street-level, one town-wide - show both, say so plainly.
+    function miniCard(S) {
+      if (S.type === "pins") {
+        return '<div class="compare-card"><div class="cc-title">' + escapeHtml(S.label) + "</div>" +
+          "Street-level: " + S.total + " incidents within " + escapeHtml(S.radius) +
+          " (" + escapeHtml(S.window) + ") - " +
+          ((S.counts && S.counts.homicide) || 0) + " homicide, " +
+          ((S.counts && S.counts.violent) || 0) + " violent, " +
+          ((S.counts && S.counts.lesser) || 0) + " property/misd.</div>";
+      }
+      return '<div class="compare-card"><div class="cc-title">' + escapeHtml(S.place) + "</div>" +
+        "Town-wide (" + escapeHtml(S.year || "?") + "): " +
+        (S.violentRate !== null ? "violent rate " + Number(S.violentRate).toFixed(1) + "/1,000" : "violent count " + S.violentCount) +
+        (S.propertyRate !== null ? ", property rate " + Number(S.propertyRate).toFixed(1) + "/1,000" : "") + "</div>";
+    }
+    html += miniCard(A) + miniCard(B);
+    html += '<div class="note">These two spots use different measuring sticks - one has street-level incidents for your chosen radius and time window, the other only annual town-wide totals - so the numbers aren\'t directly comparable. Treat this as two separate pictures.</div>';
+  }
+
+  summaryEl.innerHTML = html;
+  var exitBtn = document.createElement("button");
+  exitBtn.className = "compare-btn";
+  exitBtn.type = "button";
+  exitBtn.textContent = "✕ Exit compare";
+  exitBtn.addEventListener("click", exitCompare);
+  summaryEl.appendChild(exitBtn);
+  var swapHint = document.createElement("div");
+  swapHint.className = "attribution";
+  swapHint.textContent = "Tip: search or tap another spot to replace spot 2 and compare again.";
+  summaryEl.appendChild(swapHint);
+  setStatus("Comparing " + nameA + " with " + nameB + ".");
+}
+
 // ---------- geolocation ----------
 btnLocate.addEventListener("click", function () {
   if (!navigator.geolocation) {
@@ -662,12 +822,16 @@ function renderResult(data, label) {
 
   if (!data.covered) {
     if (data.fallback) {
-      renderTownFallback(data.fallback, data.message);
+      renderTownFallback(data.fallback, data.message, label);
     } else {
       setStatus(data.message, true);
     }
     return;
   }
+
+  // Remember this result (for the compare feature and for restoring views).
+  lastSnapshot = snapshotPins(data, label);
+  lastRaw = { kind: "pins", data: data, label: label };
 
   // Pins - draw lesser first so the worst crimes sit on top and stay visible.
   var bySeverity = { other: [], lesser: [], violent: [], homicide: [] };
@@ -698,6 +862,12 @@ function renderResult(data, label) {
     });
   });
 
+  // In compare mode, the panel becomes the side-by-side table (pins stay on the map).
+  if (inCompare && compareA) {
+    renderComparison(compareA, lastSnapshot);
+    return;
+  }
+
   // Status line + summary panel.
   setStatus("Showing " + data.totalShown + " reported incident" + (data.totalShown === 1 ? "" : "s") +
     " within " + radiusLabel() + " of " + (label || "the selected point") +
@@ -727,10 +897,19 @@ function renderResult(data, label) {
           " &middot; Locations are approximate (police reports are mapped to blocks/intersections to protect privacy).</div>";
   summaryEl.innerHTML = html;
   addSaveButton();
+  addCompareButton();
 }
 
 // Town-wide picture for places without street-level pins (FBI annual data).
-function renderTownFallback(fb, message) {
+function renderTownFallback(fb, message, label) {
+  // Remember this result (for the compare feature and for restoring views).
+  lastSnapshot = snapshotTown(fb, label);
+  lastRaw = { kind: "town", fb: fb, message: message, label: label };
+  if (inCompare && compareA) {
+    renderComparison(compareA, lastSnapshot);
+    return;
+  }
+
   setStatus(message, false);
 
   function rateLine(label, stats, nationalRate) {
@@ -764,6 +943,7 @@ function renderTownFallback(fb, message) {
   html += '<div class="attribution">' + escapeHtml(fb.attribution || "") + "</div>";
   summaryEl.innerHTML = html;
   addSaveButton();
+  addCompareButton();
 }
 </script>
 </body>
