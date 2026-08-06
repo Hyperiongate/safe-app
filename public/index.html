@@ -22,6 +22,11 @@
     2026-08-06 - Switched Leaflet from CDN to self-hosted files in
                  public/vendor/leaflet/ for reliability, added inline favicon,
                  added a friendly guard if the map library fails to load.
+    2026-08-06 - Added "drop a pin" search: tap/click anywhere on the map to
+                 search that exact spot (no address needed), and the green
+                 center pin is draggable to fine-tune the spot. Crime pins
+                 have bubblingMouseEvents:false so tapping a crime pin opens
+                 its popup instead of accidentally starting a new search.
                  (latest change)
 -->
 <html lang="en">
@@ -169,8 +174,9 @@
   <div id="main">
     <div id="map"></div>
     <div id="results">
-      <p id="status">Search an address or tap "Use my location" to see reported crimes nearby.
-        Currently covering <b>San Francisco</b> and <b>Oakland</b> - more cities coming.</p>
+      <p id="status">Search an address, tap "Use my location", or just tap anywhere on the map to
+        drop a pin - no address needed. Currently covering <b>San Francisco</b> and
+        <b>Oakland</b> - more cities coming.</p>
       <div class="legend">
         <span><span class="dot" style="background:var(--c-homicide)"></span>Homicide / Murder</span>
         <span><span class="dot" style="background:var(--c-violent)"></span>Violent crime / Felony</span>
@@ -312,6 +318,21 @@ addressInput.addEventListener("keydown", function (e) {
   if (e.key === "Enter") searchAddress();
 });
 
+// ---------- drop a pin: tap/click anywhere on the map to search that spot ----------
+// A single tap drops a pin and searches there. We wait 300ms before acting so
+// a double-tap (which means "zoom in" on maps) never accidentally drops a pin.
+var pendingPinDrop = null;
+map.on("click", function (e) {
+  if (pendingPinDrop) clearTimeout(pendingPinDrop);
+  pendingPinDrop = setTimeout(function () {
+    pendingPinDrop = null;
+    runSearch(e.latlng.lat, e.latlng.lng, "your dropped pin");
+  }, 300);
+});
+map.on("dblclick", function () {
+  if (pendingPinDrop) { clearTimeout(pendingPinDrop); pendingPinDrop = null; }
+});
+
 // Re-run the search when radius or time window changes (if we have a center).
 radiusSelect.addEventListener("change", function () {
   if (currentCenter) runSearch(currentCenter.lat, currentCenter.lng, currentCenter.label);
@@ -349,7 +370,12 @@ function runSearch(lat, lng, label) {
 function drawCenterAndCircle(lat, lng, radiusMiles) {
   circleLayer.clearLayers();
   if (centerMarker) { map.removeLayer(centerMarker); centerMarker = null; }
-  centerMarker = L.marker([lat, lng]).addTo(map);
+  // The center pin is draggable: drop it, then drag to fine-tune the exact spot.
+  centerMarker = L.marker([lat, lng], { draggable: true, title: "Drag me to adjust the spot" }).addTo(map);
+  centerMarker.on("dragend", function () {
+    var position = centerMarker.getLatLng();
+    runSearch(position.lat, position.lng, "your dropped pin");
+  });
   L.circle([lat, lng], {
     radius: radiusMiles * 1609.344,
     color: "#14532d", weight: 2, fillColor: "#14532d", fillOpacity: 0.06
@@ -382,7 +408,10 @@ function renderResult(data, label) {
         radius: severity === "homicide" ? 9 : severity === "violent" ? 7 : 6,
         color: "#ffffff", weight: 1.5,
         fillColor: SEVERITY_COLORS[severity] || SEVERITY_COLORS.other,
-        fillOpacity: 0.9
+        fillOpacity: 0.9,
+        // Without this, tapping a crime pin would ALSO count as tapping the
+        // map underneath it and accidentally start a new pin-drop search.
+        bubblingMouseEvents: false
       });
       var popupHtml =
         '<div class="popup-cat" style="color:' + (SEVERITY_COLORS[severity] || "#333") + '">' +
